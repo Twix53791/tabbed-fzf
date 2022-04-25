@@ -68,6 +68,7 @@ trap 'rm $fromtabbed' EXIT
 
 # Runs fzf
 output=$(fzf ${fzf_opt[@]})
+[[ -z $output ]] && exit
 echo "$output" > $outputfile
 
 # To use rather ranger as a file picker
