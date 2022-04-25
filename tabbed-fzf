@@ -8,10 +8,14 @@
 # DEPENDENCIES:
 #		tabapp 	(https://github.com/Twix53791/bsp-tabapp)
 #		rifle		(cf. ranger)
+#		bspwm
+#		fzf
 #
 # You could probably replace rifle by another application.
 # Personally, I did'nt find (for now) a way to run xdg-open
 #  in the background to use it in this script...
+# It is also possible to rewrite the script to make it work
+#  outside bspwm.
 
 #::::::::::::: SETTINGS ::::::::::::::::::::::::::::::::
 
@@ -63,8 +67,7 @@ touch $fromtabbed
 trap 'rm $fromtabbed' EXIT
 
 # Runs fzf
-output=$(fzfz tabbed)
-#output=$(fzf ${fzf_opt[@]})
+output=$(fzf ${fzf_opt[@]})
 echo "$output" > $outputfile
 
 # To use rather ranger as a file picker
