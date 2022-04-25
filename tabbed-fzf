@@ -1,0 +1,86 @@
+#!/bin/bash
+# MADE by twix (https://github.com/Twix53791/)
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# This script is intended to run fzf into tabbed, as the
+#  default command for the tabbed new tabs, and open the
+#  files selected in the fzf menu into tabbed.
+#
+# DEPENDENCIES:
+#		tabapp 	(https://github.com/Twix53791/bsp-tabapp)
+#		rifle		(cf. ranger)
+#
+# You could probably replace rifle by another application.
+# Personally, I did'nt find (for now) a way to run xdg-open
+#  in the background to use it in this script...
+
+#::::::::::::: SETTINGS ::::::::::::::::::::::::::::::::
+
+# Set the fzf default options:
+fzf_opt=('-m')
+
+# To load the options of the environment variable FZF_DEFAULT_OPTS
+#	or executes commands sourced via an interactive shell,
+#	the following line has to be uncomment. Replace .bashrc with
+#	.zshrc or whatever if you need...
+source /home/archx/.bashrc
+
+#::::::::::::: FUNCTIONS :::::::::::::::::::::::::::::::
+
+_grab(){
+	bspc subscribe -c $1 node_add | while read -a msg; do
+		tabapp add ${msg[4]} $2
+	done
+}
+
+_stop_grab(){
+	while true;do
+		local child=$(ps -o comm= $(pgrep -P $1))
+		if [[ $child == *rifle* ]]; then
+			sleep .1
+			child=$(pgrep rifle)
+			if [[ -z $child ]]; then
+				return
+			else
+				tokill=$(pgrep -P $2)
+				for pid in $tokill;do kill $pid;done
+				rm $fromtabbed
+				return
+			fi
+		fi
+	done
+}
+
+#::::::::::::::: SCRIPT ::::::::::::::::::::::::::::::::
+
+ntpid=$$
+wid=$(bspc query -N -n focused)
+instance=$(xprop -id $wid | grep WM_CLASS | grep -oP "tabbed.\K.*?(?=\")" | rev)
+
+outputfile="/tmp/tabbedfzfoutput"
+fromtabbed="/tmp/fromtabbed"
+touch $fromtabbed
+
+trap 'rm $fromtabbed' EXIT
+
+# Runs fzf
+output=$(fzfz tabbed)
+#output=$(fzf ${fzf_opt[@]})
+echo "$output" > $outputfile
+
+# To use rather ranger as a file picker
+#ranger --choosefiles=$outputfile
+
+# Set the list of files to open
+for line in $(seq 1 $(cat $outputfile | wc -l)); do
+	_path=$(cat $outputfile | sed -n $line\p)
+	files+=("$_path")
+done
+
+# Runs the backgound functions
+_grab ${#files[@]} $instance &
+_stop_grab $ntpid $! &
+
+# Executes rifle and waits the background functions
+#  to execute their processes
+rifle "${files[@]}" &>/dev/null
+wait
