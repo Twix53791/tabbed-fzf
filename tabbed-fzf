@@ -1,90 +1,160 @@
 #!/bin/bash
 # MADE by twix (https://github.com/Twix53791/)
 #:::::::::::::::::::::::::::::::::::::::::::::::::::::::
-# This script is intended to run fzf into tabbed, as the
-#  default command for the tabbed new tabs, and open the
-#  files selected in the fzf menu into tabbed.
+# This script is intended to run fzf into as the default
+#  command for the tabbed new tabs, and open the selected
+#  files in the fzf menu into tabbed
 #
 # DEPENDENCIES:
 #		tabapp 	(https://github.com/Twix53791/bsp-tabapp)
-#		rifle		(cf. ranger)
-#		bspwm
 #		fzf
+#		bspwm
+# 	and
+#		or xdg-open
+#		or rifle
+#		or openrule		(https://github.com/Twix53791/openrule)
 #
-# You could probably replace rifle by another application.
-# Personally, I did'nt find (for now) a way to run xdg-open
-#  in the background to use it in this script...
-# It is also possible to rewrite the script to make it work
-#  outside bspwm.
-
+# It supports an openwith integration (https://github.com/Twix53791/openwith-fzf)
+#
+# It is possible to rewrite the script to make it works
+#  outside bspwm
+#
 #::::::::::::: SETTINGS ::::::::::::::::::::::::::::::::
 
 # Set the fzf default options:
 fzf_opt=('-m')
 
+# Set the opening method
+#openapp='openrule'
+#openapp='rifle'
+openapp='xdg-open'
+
+# Set to 1 to enable openwith integration
+#  Needs fzfz, or you will have to write your own script
+#  to run openwith from fzf
+enableopw=0
+
+# Set to 1 to enable fzfz
+enablefzfz=0
+
 # To load the options of the environment variable FZF_DEFAULT_OPTS
-#	or executes commands sourced via an interactive shell,
-#	the following line has to be uncomment. Replace .bashrc with
-#	.zshrc or whatever if you need...
-source /home/archx/.bashrc
+#  or executes commands sourced via an interactive shell,
+#  the following line has to be uncomment. Replace .bashrc with
+#  .zshrc or whatever if you need...
+source ~/.bashrc
+
+# To configure specific behaviors for each application oppened,
+#  use bspwm external_rules file and add the following in it
+#  	echo $3 > /tmp/bsp_win_instance
+# Now, tabbed-fzf will be able to read the 'instance' name of
+#  the node added. So the grab function can now adapt its rules
+#  to each application, according to the instance name of the later
+instfile="/tmp/bsp_win_instance"
+
+# To configure 'exceptions rules' avoiding the _grab function
+#  to grab no matter what, use the _grab_stop function
 
 #::::::::::::: FUNCTIONS :::::::::::::::::::::::::::::::
 
+# Use tabapp to add the created node into the current tabbed instance
 _grab(){
-	bspc subscribe -c $1 node_add | while read -a msg; do
+	n=0; max=$1
+	bspc subscribe node_add | while read -a msg; do
+		((n++))
+
+		[[ -f $instfile ]] && app=$(< $instfile)
+		case $app in
+			atom) max=1;;
+			emacs) max=1;;
+ 			darktable) max=1;;
+			dragon-drop) return;;
+ 			gimp) [[ -z $gimp ]] && max=2;gimp=1;;
+		esac
+
 		tabapp add ${msg[4]} $2
+		((n == max)) && return
 	done
 }
 
+# Stop _grab function if the files are openened directly into
+#  tabbed-fzf, as for a terminal application as nano
+# Add here rules for any other app of this kind
 _stop_grab(){
+	start=$(($SECONDS+1))
 	while true;do
-		local child=$(ps -o comm= $(pgrep -P $1))
-		if [[ $child == *rifle* ]]; then
-			sleep .1
-			child=$(pgrep rifle)
-			if [[ -z $child ]]; then
-				return
-			else
-				tokill=$(pgrep -P $2)
-				for pid in $tokill;do kill $pid;done
-				rm $fromtabbed
-				return
-			fi
-		fi
+		child=$(ps -o pid,comm= $(pgrep -P $1) | cut -b2- | grep $openapp)
+		[[ ! -z $child ]] && child=$(ps -o comm= $(pgrep -P ${child%%' '*}))
+		if ((SECONDS >= start)); then
+			return
+      elif [[ $child == *nano* ]]; then
+      	kill $2 && return
+      fi
+      sleep .1
 	done
 }
 
 #::::::::::::::: SCRIPT ::::::::::::::::::::::::::::::::
 
-ntpid=$$
+#::::: Initialization ::::::::::::
 wid=$(bspc query -N -n focused)
 instance=$(xprop -id $wid | grep WM_CLASS | grep -oP "tabbed.\K.*?(?=\")" | rev)
 
 outputfile="/tmp/tabbedfzfoutput"
+opwith="/tmp/openwithtotabbed"
+
+# File used for communicate with daemon processes like extended_rules
+#  To avoid them trying to grab the added nodes if tabbed grabs them
 fromtabbed="/tmp/fromtabbed"
 touch $fromtabbed
-
 trap 'rm $fromtabbed' EXIT
 
-# Runs fzf
-output=$(fzf ${fzf_opt[@]})
+#:::: Runs fzf ::::::::::::
+((enablefzfz == 1)) && output=$(fzfz tabbed) ||
+	output=$(fzf ${fzf_opt[@]})
+
 [[ -z $output ]] && exit
 echo "$output" > $outputfile
 
 # To use rather ranger as a file picker
 #ranger --choosefiles=$outputfile
 
-# Set the list of files to open
-for line in $(seq 1 $(cat $outputfile | wc -l)); do
-	_path=$(cat $outputfile | sed -n $line\p)
-	files+=("$_path")
-done
+#:::::::::::::::::::::::::::
+# Check if 'openwith' option
+[[ -f $opwith ]] && openwith=$(< $opwith) &&
+	rm $opwith
+
+# Output files
+mapfile -t files < $outputfile
 
 # Runs the backgound functions
-_grab ${#files[@]} $instance &
-_stop_grab $ntpid $! &
+_grab ${#files[@]} $instance $openapp &
+	grabpid=$!
+_stop_grab $$ $grabpid &
 
-# Executes rifle and waits the background functions
-#  to execute their processes
-rifle "${files[@]}" &>/dev/null
-wait
+#:::: Open the files ::::::
+
+if [[ ! -z $openwith ]] && ((enableopw == 1)); then
+	# Openwith integration
+	setsid openrule - ${openwith##*' '} "${files[@]}" 2>/dev/null
+else
+	if [[ $openapp == openrule ]]; then
+		# Uses openrule
+		setsid openrule O "${files[@]}" 2>/dev/null
+
+	elif [[ $openapp == rifle ]]; then
+		# Uses rifle. Setsid not needed if you use the -f flag in rifle
+	 	rifle "${files[@]}" 2>/dev/null
+
+	elif [[ $openapp == xdg-open ]]; then
+		# Uses xdg-open and allows to open multiple files with
+		for file in "${files[@]}"; do
+			setsid xdg-open "$file" 2>/dev/null &
+		done
+	fi
+fi
+
+#:::::: Exit :::::::::::::::
+# Wait until the _grab function has done is job
+until [[ -z $grabpid ]]; do
+	grabpid=$(ps -o pid= $grabpid | tr -d ' ')
+done
